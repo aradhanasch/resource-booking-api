@@ -6,15 +6,30 @@ const { findAlternativeResources, findAlternativeTimes } = require('../services/
 const MIN_DURATION_MINUTES = 30;
 const MAX_DURATION_MINUTES = 4 * 60; // 4 hours
 const MIN_NOTICE_MINUTES = 15;
+const MAX_ADVANCE_DAYS = 90; // bookings can't be made further ahead than this
+
+// Shared guard for every :id route — req.params.id is always a raw string.
+function parseId(rawId, label) {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new AppError(`Invalid ${label}`, 400);
+  }
+  return id;
+}
 
 // POST /api/bookings
 const createBooking = asyncHandler(async (req, res) => {
   const { resource_id, start_time, end_time } = req.body;
   const userId = req.userId; // set by isAuthenticated
 
+  // ---- Cheap, in-memory checks first: no DB connection used for bad input ----
   if (!resource_id || !start_time || !end_time) {
     throw new AppError('resource_id, start_time, and end_time are required', 400);
   }
+
+  // Rejects "abc", 1.5, -3, etc. before they reach Postgres (which would
+  // otherwise throw a raw 22P02 and surface as a 500).
+  const resourceId = parseId(resource_id, 'resource_id');
 
   const start = new Date(start_time);
   const end = new Date(end_time);
@@ -41,11 +56,19 @@ const createBooking = asyncHandler(async (req, res) => {
     throw new AppError(`Bookings require at least ${MIN_NOTICE_MINUTES} minutes notice`, 400);
   }
 
+  const maxAdvanceMs = MAX_ADVANCE_DAYS * 24 * 60 * 60 * 1000;
+  if (start - now > maxAdvanceMs) {
+    throw new AppError(`Bookings can be made at most ${MAX_ADVANCE_DAYS} days in advance`, 400);
+  }
+
+  // ---- Database work starts here ----
+
   // Confirm the resource actually exists before booking it
-  const resourceCheck = await pool.query('SELECT id FROM resources WHERE id = $1', [resource_id]);
+  const resourceCheck = await pool.query('SELECT id FROM resources WHERE id = $1', [resourceId]);
   if (resourceCheck.rows.length === 0) {
     throw new AppError('Resource not found', 404);
   }
+
   const client = await pool.connect();
 
   try {
@@ -53,10 +76,10 @@ const createBooking = asyncHandler(async (req, res) => {
 
     // Serializes ALL booking attempts on this resource, regardless of
     // whether any overlapping row currently exists. A second concurrent
-    // transaction trying to lock the SAME resource_id blocks here until
-    // this transaction commits or rolls back. This is what closes the
-    // phantom-row race that a plain SELECT ... FOR UPDATE would miss.
-    await client.query('SELECT pg_advisory_xact_lock($1)', [resource_id]);
+    // transaction trying to lock the SAME resource id blocks here until
+    // this transaction commits or rolls back. This closes the phantom-row
+    // race that a plain SELECT ... FOR UPDATE would miss.
+    await client.query('SELECT pg_advisory_xact_lock($1)', [resourceId]);
 
     // Now that we hold the lock, no other transaction on this resource
     // can be mid-flight — so this read is safe to trust.
@@ -66,34 +89,34 @@ const createBooking = asyncHandler(async (req, res) => {
          AND status = 'CONFIRMED'
          AND start_time < $3
          AND end_time > $2`,
-      [resource_id, start, end]
+      [resourceId, start, end]
     );
 
     if (overlapCheck.rows.length > 0) {
-  await client.query('ROLLBACK');
+      await client.query('ROLLBACK');
 
-  // Gather alternatives AFTER rolling back — these are read-only
-  // queries and don't need to be part of the failed transaction.
-  const [alternativeResources, alternativeTimes] = await Promise.all([
-    findAlternativeResources(resource_id, start, end),
-    findAlternativeTimes(resource_id, start, end),
-  ]);
+      // Gather alternatives AFTER rolling back — these are read-only
+      // queries and don't need to be part of the failed transaction.
+      const [alternativeResources, alternativeTimes] = await Promise.all([
+        findAlternativeResources(resourceId, start, end),
+        findAlternativeTimes(resourceId, start, end),
+      ]);
 
-  return res.status(409).json({
-    success: false,
-    message: 'This resource is already booked for the requested time',
-    alternatives: {
-      other_resources: alternativeResources,
-      other_times: alternativeTimes,
-    },
-  });
-}
+      return res.status(409).json({
+        success: false,
+        message: 'This resource is already booked for the requested time',
+        alternatives: {
+          other_resources: alternativeResources,
+          other_times: alternativeTimes,
+        },
+      });
+    }
 
     const result = await client.query(
       `INSERT INTO bookings (user_id, resource_id, start_time, end_time)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [userId, resource_id, start, end]
+      [userId, resourceId, start, end]
     );
 
     await client.query('COMMIT'); // releases the advisory lock automatically
@@ -101,9 +124,10 @@ const createBooking = asyncHandler(async (req, res) => {
     res.status(201).json({ success: true, booking: result.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {}); // safe even if already rolled back
+    // 23P01 = exclusion_violation: the EXCLUDE constraint caught an overlap
     if (err.code === '23P01') {
-    throw new AppError('This resource is already booked for the requested time', 409);
-  }
+      throw new AppError('This resource is already booked for the requested time', 409);
+    }
     throw err;
   } finally {
     client.release(); // ALWAYS return the connection to the pool, success or failure
@@ -124,12 +148,34 @@ const getMyBookings = asyncHandler(async (req, res) => {
   res.json({ success: true, bookings: result.rows });
 });
 
+// GET /api/bookings/:id
+const getBookingById = asyncHandler(async (req, res) => {
+  const id = parseId(req.params.id, 'booking id');
 
+  const result = await pool.query(
+    `SELECT b.*, r.name AS resource_name, r.location AS resource_location
+     FROM bookings b
+     JOIN resources r ON r.id = b.resource_id
+     WHERE b.id = $1`,
+    [id]
+  );
+  const booking = result.rows[0];
+
+  if (!booking) {
+    throw new AppError('Booking not found', 404);
+  }
+
+  if (booking.user_id !== req.userId) {
+    throw new AppError('You can only view your own bookings', 403);
+  }
+
+  res.json({ success: true, booking });
+});
 
 // DELETE /api/bookings/:id
 const cancelBooking = asyncHandler(async (req, res) => {
-  const { id } = req.params;
   const userId = req.userId;
+  const id = parseId(req.params.id, 'booking id');
 
   const result = await pool.query('SELECT * FROM bookings WHERE id = $1', [id]);
   const booking = result.rows[0];
@@ -139,9 +185,8 @@ const cancelBooking = asyncHandler(async (req, res) => {
   }
 
   // Ownership check — a user can only cancel their own bookings.
-  // We check this explicitly rather than filtering it into the WHERE
-  // clause of the UPDATE, so we can give a clear 403 instead of a
-  // misleading 404 when the booking exists but isn't theirs.
+  // Checked explicitly (not folded into the UPDATE's WHERE clause) so we
+  // can return a clear 403 instead of a misleading 404.
   if (booking.user_id !== userId) {
     throw new AppError('You can only cancel your own bookings', 403);
   }
@@ -162,4 +207,4 @@ const cancelBooking = asyncHandler(async (req, res) => {
   res.json({ success: true, booking: updated.rows[0] });
 });
 
-module.exports = { createBooking, getMyBookings, cancelBooking }; // update this export line
+module.exports = { createBooking, getMyBookings, getBookingById, cancelBooking };

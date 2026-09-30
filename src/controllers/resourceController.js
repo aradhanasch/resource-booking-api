@@ -2,6 +2,18 @@ const pool = require('../db/pool');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
+// Shared guard for every :id route below — req.params.id is always a raw
+// string from the URL. Without this, a non-numeric id (e.g. "abc") reaches
+// Postgres unvalidated and throws a raw 22P02, which isn't marked
+// isOperational and falls through to a generic 500 instead of a clean 400.
+function parseId(rawId) {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new AppError('Invalid resource id', 400);
+  }
+  return id;
+}
+
 // GET /api/resources — public, list all resources
 const getResources = asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM resources ORDER BY id');
@@ -10,7 +22,7 @@ const getResources = asyncHandler(async (req, res) => {
 
 // GET /api/resources/:id — public, single resource
 const getResourceById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
   const result = await pool.query('SELECT * FROM resources WHERE id = $1', [id]);
 
   if (result.rows.length === 0) {
@@ -40,7 +52,7 @@ const createResource = asyncHandler(async (req, res) => {
 
 // PUT /api/resources/:id — admin only
 const updateResource = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
   const { name, type, capacity, location, features } = req.body;
 
   const result = await pool.query(
@@ -64,8 +76,18 @@ const updateResource = asyncHandler(async (req, res) => {
 
 // DELETE /api/resources/:id — admin only
 const deleteResource = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const result = await pool.query('DELETE FROM resources WHERE id = $1 RETURNING id', [id]);
+  const id = parseId(req.params.id);
+
+  let result;
+  try {
+    result = await pool.query('DELETE FROM resources WHERE id = $1 RETURNING id', [id]);
+  } catch (err) {
+    // 23503 = foreign_key_violation: bookings still reference this resource
+    if (err.code === '23503') {
+      throw new AppError('Cannot delete a resource that has bookings', 409);
+    }
+    throw err;
+  }
 
   if (result.rows.length === 0) {
     throw new AppError('Resource not found', 404);

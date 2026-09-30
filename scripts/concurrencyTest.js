@@ -1,16 +1,36 @@
 const axios = require('axios');
 
 // You need a valid JWT here — log in via Postman first and paste the token.
-const TOKEN = process.env.TEST_TOKEN || 'PASTE_A_VALID_TOKEN_HERE';
+// Accepts either TOKEN or TEST_TOKEN as the env var name, whichever you set.
+const TOKEN = process.env.TOKEN || process.env.TEST_TOKEN;
 const BASE_URL = 'http://localhost:5000';
 const CONCURRENT_REQUESTS = 10;
 
-// Pick a resource_id and a time slot that's definitely free right now.
+if (!TOKEN) {
+  console.error('No token found. Run: $env:TEST_TOKEN="<jwt>" ; node scripts/concurrencyTest.js');
+  process.exit(1);
+}
+
+// Build a slot that's always well in the future relative to "now", so this
+// script keeps working no matter when it's run — no more hardcoded dates
+// silently going stale and failing the 15-minute-notice check.
+function getFutureSlot() {
+  const daysAhead = 2 + Math.floor(Math.random() * 20);   // stays inside the 30-day limit (see 2a)
+  const start = new Date(Date.now() + daysAhead * 86400000);
+  start.setUTCHours(8 + Math.floor(Math.random() * 10), 0, 0, 0);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { start_time: start.toISOString(), end_time: end.toISOString() };
+}
+
+const { start_time, end_time } = getFutureSlot();
+
 const bookingPayload = {
   resource_id: 2,
-  start_time: '2026-09-28T16:00:00+05:30',
-  end_time: '2026-09-28T17:00:00+05:30',
+  start_time,
+  end_time,
 };
+
+console.log(`Target slot: ${start_time} to ${end_time}\n`);
 
 async function fireOneRequest(index) {
   try {

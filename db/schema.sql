@@ -31,7 +31,8 @@ CREATE TABLE bookings (
   end_time TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL DEFAULT 'CONFIRMED', -- 'CONFIRMED' | 'CANCELLED'
   created_at TIMESTAMPTZ DEFAULT now(),
-  CHECK (end_time > start_time)
+  CHECK (end_time > start_time),
+  CHECK (end_time - start_time BETWEEN interval '30 minutes' AND interval '4 hours')
 );
 
 -- Speeds up the conflict-check query; only indexes bookings that can
