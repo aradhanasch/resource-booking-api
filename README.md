@@ -29,6 +29,12 @@ users, resources, bookings (see db/schema.sql).
 3. Run `db/schema.sql` in the Supabase SQL editor
 4. `npm run dev`
 
+## Creating an admin
+Registration always creates a normal user. To promote one, run this in the Supabase SQL editor:
+```sql
+UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
+```
+
 ## API
 | Method | Path | Auth | Success | Errors |
 |---|---|---|---|---|
@@ -56,4 +62,4 @@ Test: 10 simultaneous requests for the same slot gave 1 success and 9 conflicts
 
 ## Known Limitations
 - Alternative time suggestions only scan later on the same day
-- Server-local time is used when computing the day for alternatives
+- Day boundaries for alternative suggestions are computed in IST (Asia/Kolkata)
