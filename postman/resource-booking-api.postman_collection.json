@@ -1116,10 +1116,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Pick a random day 3-52 days ahead at 10:00 IST (04:30 UTC) so repeated runs never collide.",
-                  "const daysAhead = 3 + Math.floor(Math.random() * 50);",
-                  "const start = new Date(Date.now() + daysAhead * 86400000);",
-                  "start.setUTCHours(4, 30, 0, 0);",
+                  "// Forget ids from earlier runs, so a failure here can never be hidden by a stale id.",
+                  "['bookingId', 'adjacentId', 'rebookId'].forEach((k) => pm.collectionVariables.unset(k));",
+                  "// Random day 3-80 days ahead and a random hourly start 08:00-20:00 IST (about 1000 slots),",
+                  "// so leftovers from earlier runs almost never collide with the new slot.",
+                  "const daysAhead = 3 + Math.floor(Math.random() * 78);",
+                  "const hourIst = 8 + Math.floor(Math.random() * 13);",
+                  "const dayStartUtc = new Date(Date.now() + daysAhead * 86400000);",
+                  "dayStartUtc.setUTCHours(0, 0, 0, 0);",
+                  "const start = new Date(dayStartUtc.getTime() + (hourIst * 60 - 330) * 60000); // IST = UTC+5:30",
                   "const min = 60 * 1000;",
                   "const iso = (ms) => new Date(ms).toISOString();",
                   "const s = start.getTime();",
@@ -1147,8 +1152,8 @@
                 "exec": [
                   "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
                   "const b = pm.response.json().booking;",
-                  "pm.test('booking is CONFIRMED', () => pm.expect(b.status).to.eql('CONFIRMED'));",
-                  "pm.collectionVariables.set('bookingId', b.id);"
+                  "pm.test('booking is CONFIRMED', () => pm.expect(b && b.status).to.eql('CONFIRMED'));",
+                  "if (b) pm.collectionVariables.set('bookingId', b.id);"
                 ]
               }
             }
@@ -1367,7 +1372,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json().booking;",
+                  "if (b) pm.collectionVariables.set('adjacentId', b.id);"
                 ]
               }
             }
@@ -2197,7 +2204,88 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json().booking;",
+                  "if (b) pm.collectionVariables.set('rebookId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup - cancel the re-booked slot",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{rebookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{rebookId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Leaves no confirmed bookings behind, so repeated runs never block each other."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup - cancel the adjacent booking",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{adjacentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{adjacentId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
                 ]
               }
             }
@@ -2245,6 +2333,14 @@
     },
     {
       "key": "bookingId",
+      "value": ""
+    },
+    {
+      "key": "adjacentId",
+      "value": ""
+    },
+    {
+      "key": "rebookId",
       "value": ""
     }
   ]
