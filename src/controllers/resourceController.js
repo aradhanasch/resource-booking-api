@@ -14,6 +14,54 @@ function parseId(rawId) {
   return id;
 }
 
+// Validates and cleans the fields of a resource. Throws a 400 AppError on bad
+// input, so malformed data never reaches Postgres (which would answer with a
+// raw error that the error handler turns into a confusing 500).
+// requireAll = true  -> create: name and type are mandatory
+// requireAll = false -> update: every field is optional, but any field that
+//                       IS provided must be valid
+function validateResourceInput(body, { requireAll }) {
+  const { name, type, capacity, location, features } = body || {};
+  const clean = {};
+
+  if (requireAll || name !== undefined) {
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new AppError('name must be a non-empty string', 400);
+    }
+    clean.name = name.trim();
+  }
+
+  if (requireAll || type !== undefined) {
+    if (typeof type !== 'string' || type.trim() === '') {
+      throw new AppError('type must be a non-empty string', 400);
+    }
+    clean.type = type.trim();
+  }
+
+  if (capacity !== undefined && capacity !== null) {
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      throw new AppError('capacity must be a positive whole number', 400);
+    }
+    clean.capacity = capacity;
+  }
+
+  if (location !== undefined && location !== null) {
+    if (typeof location !== 'string') {
+      throw new AppError('location must be a string', 400);
+    }
+    clean.location = location.trim();
+  }
+
+  if (features !== undefined && features !== null) {
+    if (!Array.isArray(features) || !features.every((f) => typeof f === 'string' && f.trim() !== '')) {
+      throw new AppError('features must be an array of non-empty strings', 400);
+    }
+    clean.features = features.map((f) => f.trim());
+  }
+
+  return clean;
+}
+
 // GET /api/resources — public, list all resources
 const getResources = asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM resources ORDER BY id');
@@ -34,17 +82,15 @@ const getResourceById = asyncHandler(async (req, res) => {
 
 // POST /api/resources — admin only
 const createResource = asyncHandler(async (req, res) => {
-  const { name, type, capacity, location, features } = req.body;
-
-  if (!name || !type) {
-    throw new AppError('Name and type are required', 400);
-  }
+  const { name, type, capacity, location, features } = validateResourceInput(req.body, {
+    requireAll: true,
+  });
 
   const result = await pool.query(
     `INSERT INTO resources (name, type, capacity, location, features)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [name, type, capacity || null, location || null, features || []]
+    [name, type, capacity ?? null, location ?? null, features ?? []]
   );
 
   res.status(201).json({ success: true, resource: result.rows[0] });
@@ -53,7 +99,13 @@ const createResource = asyncHandler(async (req, res) => {
 // PUT /api/resources/:id — admin only
 const updateResource = asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
-  const { name, type, capacity, location, features } = req.body;
+  const fields = validateResourceInput(req.body, { requireAll: false });
+
+  if (Object.keys(fields).length === 0) {
+    throw new AppError('Provide at least one field to update', 400);
+  }
+
+  const { name, type, capacity, location, features } = fields;
 
   const result = await pool.query(
     `UPDATE resources

@@ -7,6 +7,8 @@ const MIN_DURATION_MINUTES = 30;
 const MAX_DURATION_MINUTES = 4 * 60; // 4 hours
 const MIN_NOTICE_MINUTES = 15;
 const MAX_ADVANCE_DAYS = 90; // bookings can't be made further ahead than this
+const ISO_WITH_OFFSET =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 // Shared guard for every :id route — req.params.id is always a raw string.
 function parseId(rawId, label) {
@@ -26,7 +28,17 @@ const createBooking = asyncHandler(async (req, res) => {
   if (!resource_id || !start_time || !end_time) {
     throw new AppError('resource_id, start_time, and end_time are required', 400);
   }
-
+  if (
+    typeof start_time !== 'string' ||
+    typeof end_time !== 'string' ||
+    !ISO_WITH_OFFSET.test(start_time) ||
+    !ISO_WITH_OFFSET.test(end_time)
+  ) {
+    throw new AppError(
+      'start_time and end_time must be ISO 8601 with a timezone offset, e.g. 2026-10-15T10:00:00+05:30',
+      400
+    );
+  }
   // Rejects "abc", 1.5, -3, etc. before they reach Postgres (which would
   // otherwise throw a raw 22P02 and surface as a 500).
   const resourceId = parseId(resource_id, 'resource_id');
