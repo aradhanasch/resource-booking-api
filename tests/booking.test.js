@@ -1,20 +1,36 @@
 const request = require('supertest');
 const app = require('../src/app');
 const pool = require('../src/db/pool');
+const { istDayBounds, IST_OFFSET_MS } = require('../src/utils/istTime');
 
 let token;
 let resourceId;
 
-// Must stay within the advance-booking limit (90 days) and be in the future.
-const testDate = '2026-11-15';
+// Test day: 75 days ahead, as an IST calendar date (YYYY-MM-DD).
+// - Always in the future and inside the 90-day booking window, so this file
+//   never goes stale as the calendar moves on.
+// - Far outside the days used by the Postman collection (3-52 days ahead)
+//   and the manual scripts (2-21 days ahead), so they can never collide.
+const testDate = new Date(Date.now() + 75 * 24 * 60 * 60 * 1000 + IST_OFFSET_MS)
+  .toISOString()
+  .slice(0, 10);
 
 const book = (body) =>
   request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send(body);
 
+// Removes every booking on the test day (IST calendar day).
+const clearTestDay = async () => {
+  const { startOfDay, endOfDay } = istDayBounds(new Date(`${testDate}T12:00:00+05:30`));
+  await pool.query(
+    `DELETE FROM bookings WHERE start_time >= $1 AND start_time <= $2`,
+    [startOfDay, endOfDay]
+  );
+};
+
 beforeAll(async () => {
-  // Wipe any bookings this suite may have left behind on a prior run,
+  // Wipe any bookings a prior (possibly crashed) run left on the test day,
   // so the suite is idempotent no matter how many times it's re-run.
-  await pool.query(`DELETE FROM bookings WHERE start_time::date = $1`, [testDate]);
+  await clearTestDay();
 
   // Register a fresh test user (unique email per run)
   const email = `test_${Date.now()}@example.com`;
@@ -35,6 +51,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await clearTestDay(); // leave no test bookings behind
   await pool.end();
 });
 
