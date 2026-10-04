@@ -7,7 +7,8 @@
   "dev": "nodemon src/server.js",
   "start": "node src/server.js",
   "test": "jest --runInBand",
-  "test:concurrency": "node scripts/concurrencyTest.js"
+  "test:concurrency": "node scripts/concurrencyTest.js",
+  "test:pool": "node scripts/poolPressureTest.js"
 },
   "keywords": [],
   "author": "",

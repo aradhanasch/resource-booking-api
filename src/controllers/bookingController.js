@@ -70,19 +70,14 @@ const createBooking = asyncHandler(async (req, res) => {
   }
 
   const client = await pool.connect();
+  let booking = null; // stays null if there was a conflict
 
   try {
     await client.query('BEGIN');
 
-    // Serializes ALL booking attempts on this resource, regardless of
-    // whether any overlapping row currently exists. A second concurrent
-    // transaction trying to lock the SAME resource id blocks here until
-    // this transaction commits or rolls back. This closes the phantom-row
-    // race that a plain SELECT ... FOR UPDATE would miss.
+    // Serializes all booking attempts on this resource.
     await client.query('SELECT pg_advisory_xact_lock($1)', [resourceId]);
 
-    // Now that we hold the lock, no other transaction on this resource
-    // can be mid-flight — so this read is safe to trust.
     const overlapCheck = await client.query(
       `SELECT id FROM bookings
        WHERE resource_id = $1
@@ -93,45 +88,49 @@ const createBooking = asyncHandler(async (req, res) => {
     );
 
     if (overlapCheck.rows.length > 0) {
+      // Conflict: just end the transaction. We do NOT build the response
+      // here, because we must give the connection back first.
       await client.query('ROLLBACK');
-
-      // Gather alternatives AFTER rolling back — these are read-only
-      // queries and don't need to be part of the failed transaction.
-      const [alternativeResources, alternativeTimes] = await Promise.all([
-        findAlternativeResources(resourceId, start, end),
-        findAlternativeTimes(resourceId, start, end),
-      ]);
-
-      return res.status(409).json({
-        success: false,
-        message: 'This resource is already booked for the requested time',
-        alternatives: {
-          other_resources: alternativeResources,
-          other_times: alternativeTimes,
-        },
-      });
+    } else {
+      const result = await client.query(
+        `INSERT INTO bookings (user_id, resource_id, start_time, end_time)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [userId, resourceId, start, end]
+      );
+      await client.query('COMMIT'); // releases the advisory lock
+      booking = result.rows[0];
     }
-
-    const result = await client.query(
-      `INSERT INTO bookings (user_id, resource_id, start_time, end_time)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [userId, resourceId, start, end]
-    );
-
-    await client.query('COMMIT'); // releases the advisory lock automatically
-
-    res.status(201).json({ success: true, booking: result.rows[0] });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {}); // safe even if already rolled back
-    // 23P01 = exclusion_violation: the EXCLUDE constraint caught an overlap
-    if (err.code === '23P01') {
-      throw new AppError('This resource is already booked for the requested time', 409);
+    await client.query('ROLLBACK').catch(() => {});
+    // 23P01 = exclusion_violation: the EXCLUDE constraint caught an overlap.
+    // Treat it exactly like a normal conflict (falls through to the alternatives below).
+    if (err.code !== '23P01') {
+      throw err;
     }
-    throw err;
   } finally {
-    client.release(); // ALWAYS return the connection to the pool, success or failure
+    client.release(); // connection is back in the pool BEFORE we need any other one
   }
+
+  if (booking) {
+    return res.status(201).json({ success: true, booking });
+  }
+
+  // Conflict path. We hold NO connection at this point, so these queries can
+  // always get one from the pool.
+  const [alternativeResources, alternativeTimes] = await Promise.all([
+    findAlternativeResources(resourceId, start, end),
+    findAlternativeTimes(resourceId, start, end),
+  ]);
+
+  return res.status(409).json({
+    success: false,
+    message: 'This resource is already booked for the requested time',
+    alternatives: {
+      other_resources: alternativeResources,
+      other_times: alternativeTimes,
+    },
+  });
 });
 
 // GET /api/bookings/my

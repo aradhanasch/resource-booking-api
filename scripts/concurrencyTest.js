@@ -61,7 +61,7 @@ async function runConcurrencyTest() {
   const unexpected = results.filter((r) => r.status !== 201 && r.status !== 409);
 
   console.log('--- Results ---');
-  results.forEach((r) => console.log(`Request ${r.index}: ${r.status} — ${r.result}`));
+  results.forEach((r) => console.log(`Request ${r.index}: ${r.status} - ${r.result}`));
 
   console.log('\n--- Summary ---');
   console.log(`Successful bookings: ${successes.length}`);
@@ -69,9 +69,9 @@ async function runConcurrencyTest() {
   console.log(`Unexpected results: ${unexpected.length}`);
 
   if (successes.length === 1 && conflicts.length === CONCURRENT_REQUESTS - 1) {
-    console.log('\n PASS — exactly one booking succeeded, concurrency protection works.');
+    console.log('\n PASS - exactly one booking succeeded, concurrency protection works.');
   } else {
-    console.log('\n FAIL — expected exactly 1 success and 9 conflicts.');
+    console.log('\n FAIL - expected exactly 1 success and 9 conflicts.');
   }
 }
 

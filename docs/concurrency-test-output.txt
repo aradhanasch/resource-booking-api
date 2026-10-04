@@ -1,0 +1,22 @@
+Target slot: 2026-10-15T10:00:00.000Z to 2026-10-15T11:00:00.000Z
+
+Firing 10 simultaneous booking requests...
+
+--- Results ---
+Request 0: 409 - This resource is already booked for the requested time
+Request 1: 201 - SUCCESS
+Request 2: 409 - This resource is already booked for the requested time
+Request 3: 409 - This resource is already booked for the requested time
+Request 4: 409 - This resource is already booked for the requested time
+Request 5: 409 - This resource is already booked for the requested time
+Request 6: 409 - This resource is already booked for the requested time
+Request 7: 409 - This resource is already booked for the requested time
+Request 8: 409 - This resource is already booked for the requested time
+Request 9: 409 - This resource is already booked for the requested time
+
+--- Summary ---
+Successful bookings: 1
+Correctly rejected (409): 9
+Unexpected results: 0
+
+ PASS - exactly one booking succeeded, concurrency protection works.
