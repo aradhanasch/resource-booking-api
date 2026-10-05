@@ -2,11 +2,15 @@ const pool = require('../db/pool');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { findAlternativeResources, findAlternativeTimes } = require('../services/alternativeService');
+const { istDayBounds, IST_OFFSET_MS } = require('../utils/istTime');
 
 const MIN_DURATION_MINUTES = 30;
 const MAX_DURATION_MINUTES = 4 * 60; // 4 hours
 const MIN_NOTICE_MINUTES = 15;
 const MAX_ADVANCE_DAYS = 90; // bookings can't be made further ahead than this
+const VALID_STATUSES = ['CONFIRMED', 'CANCELLED'];
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ADMIN_LIST_LIMIT = 100; // hard cap so the list can never return an unbounded result
 const ISO_WITH_OFFSET =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 
@@ -145,6 +149,78 @@ const createBooking = asyncHandler(async (req, res) => {
   });
 });
 
+// GET /api/bookings   (admin only)
+// Optional filters: resource_id, user_id, status (CONFIRMED|CANCELLED),
+// date (YYYY-MM-DD, interpreted as an IST calendar day).
+const getAllBookings = asyncHandler(async (req, res) => {
+  const { resource_id, user_id, status, date } = req.query;
+
+  // Express 5 gives an array if a param is repeated (?status=a&status=b).
+  for (const [name, value] of Object.entries({ resource_id, user_id, status, date })) {
+    if (value !== undefined && typeof value !== 'string') {
+      throw new AppError(`Invalid ${name}`, 400);
+    }
+  }
+
+  const conditions = [];
+  const params = [];
+  // Pushes a value and returns its $n placeholder, so values always go
+  // through parameters and never into the SQL string.
+  const add = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (resource_id !== undefined) {
+    conditions.push(`b.resource_id = ${add(parseId(resource_id, 'resource_id'))}`);
+  }
+  if (user_id !== undefined) {
+    conditions.push(`b.user_id = ${add(parseId(user_id, 'user_id'))}`);
+  }
+  if (status !== undefined) {
+    const normalized = status.toUpperCase();
+    if (!VALID_STATUSES.includes(normalized)) {
+      throw new AppError(`status must be one of: ${VALID_STATUSES.join(', ')}`, 400);
+    }
+    conditions.push(`b.status = ${add(normalized)}`);
+  }
+  if (date !== undefined) {
+    // Noon IST is safely inside the intended calendar day. JS silently rolls
+    // impossible dates over (2026-02-31 becomes 3 March), so after parsing we
+    // convert back to an IST date string and require it to match the input.
+    const probe = new Date(`${date}T12:00:00+05:30`);
+    const roundTrip = isNaN(probe.getTime())
+      ? null
+      : new Date(probe.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+    if (!DATE_ONLY.test(date) || roundTrip !== date) {
+      throw new AppError('date must be a valid date in YYYY-MM-DD format', 400);
+    }
+    const { startOfDay, endOfDay } = istDayBounds(probe);
+    // Overlap, not "starts on": a late-evening booking that runs past
+    // midnight IST still belongs to both days.
+    conditions.push(`b.start_time <= ${add(endOfDay)}`);
+    conditions.push(`b.end_time > ${add(startOfDay)}`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const result = await pool.query(
+    `SELECT b.*,
+            r.name  AS resource_name,
+            u.name  AS user_name,
+            u.email AS user_email
+     FROM bookings b
+     JOIN resources r ON r.id = b.resource_id
+     JOIN users u     ON u.id = b.user_id
+     ${where}
+     ORDER BY b.start_time DESC
+     LIMIT ${ADMIN_LIST_LIMIT}`,
+    params
+  );
+
+  res.json({ success: true, count: result.rows.length, bookings: result.rows });
+});
+
 // GET /api/bookings/my
 const getMyBookings = asyncHandler(async (req, res) => {
   const result = await pool.query(
@@ -218,4 +294,4 @@ const cancelBooking = asyncHandler(async (req, res) => {
   res.json({ success: true, booking: updated.rows[0] });
 });
 
-module.exports = { createBooking, getMyBookings, getBookingById, cancelBooking };
+module.exports = { createBooking, getAllBookings, getMyBookings, getBookingById, cancelBooking };
