@@ -1,110 +1,233 @@
 # Resource Booking Platform (Backend API)
 
-A REST API for booking shared resources such as meeting rooms, labs and equipment. Its main job is to guarantee that **two people can never hold overlapping bookings for the same resource, even when requests arrive at the same instant**. When a request does conflict, the API suggests other resources and other time slots.
+A REST API for booking shared resources such as meeting rooms, labs, and equipment. Its main goal is to guarantee that **two people cannot hold overlapping bookings for the same resource, even when requests arrive concurrently**.
 
-This is a backend-only project. There is no frontend; the API is exercised through Postman and automated tests.
+When a booking conflicts, the API suggests alternative resources and alternative time slots.
+
+This is a **backend-only SDE project**. The API is deployed on Railway and can also be tested locally through Postman and automated tests.
 
 ## Features
 
-- JWT authentication with bcrypt-hashed passwords; `user` and `admin` roles
-- Resource CRUD (create, update and delete are admin-only)
-- Bookings with validation:
-  - duration between 30 minutes and 4 hours
-  - at least 15 minutes notice
-  - at most 90 days in advance
-  - timestamps must carry an explicit timezone offset
-- Overlap prevention that holds under concurrent requests (see [Concurrency Design](#concurrency-design))
-- On conflict (`409`), the response includes alternative resources of the same type and alternative time slots on the same resource
-- Users can view their own bookings and cancel future ones; a cancelled slot becomes bookable again
-- Admin booking list with filters (resource, user, status, IST calendar day)
+* JWT authentication with bcrypt-hashed passwords
+* `user` and `admin` roles
+* Resource CRUD operations with admin-only create, update, and delete access
+* Booking validation:
+
+  * Duration between 30 minutes and 4 hours
+  * At least 15 minutes notice
+  * Maximum 90 days in advance
+  * Timestamps must include an explicit timezone offset
+* Concurrent booking protection using PostgreSQL transactions, advisory locks, and an `EXCLUDE` constraint
+* Conflict responses (`409`) include:
+
+  * Alternative resources of the same type
+  * Alternative time slots on the requested resource
+* Users can view their own bookings and cancel future bookings
+* Cancelled slots become available for new bookings
+* Admin booking list with filters for resource, user, status, and IST calendar day
 
 ## Tech Stack
 
-Node.js, Express 5, PostgreSQL (hosted on Supabase), `pg`, JSON Web Tokens, bcrypt, Jest + Supertest, Postman
+* **Backend:** Node.js, Express
+* **Database:** PostgreSQL (Supabase)
+* **Authentication:** JSON Web Tokens (JWT), bcrypt
+* **Database Driver:** `pg`
+* **Testing:** Jest, Supertest
+* **API Testing:** Postman
+* **Deployment:** Railway
 
 ## Project Structure
 
-```
+```text
 .
-├── db/schema.sql            # tables, index, EXCLUDE constraint, sample resources
-├── docs/                    # saved output of the concurrency test
-├── postman/                 # Postman collection + local environment
-├── scripts/                 # manual concurrency and connection-pool tests
+├── db/
+│   └── schema.sql                 # Tables, indexes, constraints, sample resources
+├── docs/
+│   └── concurrency-test-output.txt
+├── postman/
+│   ├── resource-booking-api.postman_collection.json
+│   └── local.postman_environment.json
+├── scripts/
+│   ├── concurrencyTest.js         # Manual concurrency test
+│   └── poolTest.js                # Connection-pool test
 ├── src/
-│   ├── app.js               # Express app (routes, middleware)
-│   ├── server.js            # entry point; checks required env vars
-│   ├── controllers/         # auth, resources, bookings
-│   ├── middleware/          # isAuthenticated, requireAdmin, errorHandler
+│   ├── app.js                     # Express app, routes and middleware
+│   ├── server.js                  # Server entry point and environment checks
+│   ├── controllers/
+│   │   ├── authController.js
+│   │   ├── resourceController.js
+│   │   └── bookingController.js
+│   ├── middleware/
+│   │   ├── isAuthenticated.js
+│   │   ├── requireAdmin.js
+│   │   └── errorHandler.js
 │   ├── routes/
-│   ├── services/            # alternative resource / time suggestions
-│   ├── db/pool.js           # pg connection pool
-│   └── utils/               # AppError, asyncHandler, JWT helper, IST helpers
-└── tests/                   # Jest tests
+│   ├── services/
+│   │   └── alternativeService.js  # Alternative resource/time suggestions
+│   ├── db/
+│   │   └── pool.js                # PostgreSQL connection pool
+│   └── utils/
+│       ├── AppError.js
+│       ├── asyncHandler.js
+│       ├── jwt.js
+│       └── ist.js
+└── tests/
+    └── ...                         # Jest + Supertest tests
 ```
 
 ## Getting Started
 
-**Requirements:** Node.js 18+ and a PostgreSQL database. The project is tested on Supabase Postgres 15+.
+### Requirements
 
-1. Clone the repo and install dependencies:
+* Node.js 18+
+* PostgreSQL 15+
+* A PostgreSQL database (the project was tested with Supabase PostgreSQL)
+
+### 1. Clone the Repository
+
 ```bash
-   git clone https://github.com/aradhanasch/resource-booking-api.git
-   cd resource-booking-api
-   npm install
+git clone https://github.com/aradhanasch/resource-booking-api.git
+cd resource-booking-api
+npm install
 ```
-2. Copy `.env.example` to `.env` and fill in the values:
 
-   | Variable | Description |
-   |---|---|
-   | `DATABASE_URL` | PostgreSQL connection string |
-   | `JWT_SECRET` | Secret used to sign tokens (required; the server refuses to start without it) |
-   | `PORT` | Port to listen on (defaults to 5000) |
+### 2. Configure Environment Variables
 
-3. Run `db/schema.sql` against your database (in Supabase: SQL Editor → paste → run). It enables `btree_gist`, creates the tables, and inserts three sample resources.
-4. Start the server:
+Copy `.env.example` to `.env` and provide the required values:
+
+| Variable       | Description                                       |
+| -------------- | ------------------------------------------------- |
+| `DATABASE_URL` | PostgreSQL connection string                      |
+| `JWT_SECRET`   | Secret used to sign JWTs                          |
+| `PORT`         | Port on which the server runs; defaults to `5000` |
+
+### 3. Set Up the Database
+
+Run `db/schema.sql` against your PostgreSQL database.
+
+For Supabase:
+
+1. Open the **SQL Editor**
+2. Paste the contents of `db/schema.sql`
+3. Run the script
+
+The schema:
+
+* Enables the `btree_gist` extension
+* Creates the required tables
+* Adds indexes and constraints
+* Creates the booking overlap protection
+* Inserts three sample resources
+
+### 4. Start the Server
+
+Development mode:
+
 ```bash
-   npm run dev     # with nodemon
-   npm start       # plain node
+npm run dev
 ```
-5. Check it is up: `GET http://localhost:5000/api/health` returns `{ "status": "ok" }`.
 
-### Creating an admin
+Normal mode:
 
-Registration always creates a normal user. To promote one, run this in the SQL editor:
+```bash
+npm start
+```
+
+### 5. Check the API
+
+```text
+GET http://localhost:5000/api/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Live Deployment
+
+The backend API is deployed on **Railway**.
+
+Health endpoint:
+
+```text
+/api/health
+```
+
+The API can also be tested using the included Postman collection.
+
+## Creating an Admin
+
+Registration always creates a normal user.
+
+To promote a user to admin, run:
 
 ```sql
-UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
+UPDATE users
+SET role = 'admin'
+WHERE email = 'you@example.com';
 ```
 
 ## API
 
-All responses are JSON. Errors have the shape `{ "success": false, "message": "..." }`.
-Protected routes need the header `Authorization: Bearer <token>`, where the token comes from register or login.
+All responses are returned as JSON.
 
-| Method | Path | Auth | Success | Errors |
-|---|---|---|---|---|
-| GET | `/api/health` | none | 200 | |
-| POST | `/api/auth/register` | none | 201 | 400, 409 |
-| POST | `/api/auth/login` | none | 200 | 400, 401 |
-| GET | `/api/resources` | none | 200 | |
-| GET | `/api/resources/:id` | none | 200 | 400, 404 |
-| POST | `/api/resources` | admin | 201 | 400, 401, 403 |
-| PUT | `/api/resources/:id` | admin | 200 | 400, 401, 403, 404 |
-| DELETE | `/api/resources/:id` | admin | 200 | 400, 401, 403, 404, 409 (resource has bookings) |
-| POST | `/api/bookings` | user | 201 | 400, 401, 404, 409 |
-| GET | `/api/bookings` | admin | 200 | 400, 401, 403 |
-| GET | `/api/bookings/my` | user | 200 | 401 |
-| GET | `/api/bookings/:id` | owner | 200 | 400, 401, 403, 404 |
-| DELETE | `/api/bookings/:id` | owner | 200 | 400, 401, 403, 404 |
+General error format:
 
-`DELETE /api/bookings/:id` cancels the booking (sets its status to `CANCELLED`) rather than removing the row.
+```json
+{
+  "success": false,
+  "message": "..."
+}
+```
 
-**Admin list filters** for `GET /api/bookings`: `resource_id`, `user_id`, `status` (`CONFIRMED` or `CANCELLED`) and `date` (`YYYY-MM-DD`, read as an IST calendar day; bookings that overlap that day are included). Results are newest first and capped at 100.
+Protected routes require:
 
-### Example: create a booking
+```text
+Authorization: Bearer <token>
+```
+
+The token is returned after registration or login.
+
+| Method | Path                 | Auth  | Success | Errors                  |
+| ------ | -------------------- | ----- | ------- | ----------------------- |
+| GET    | `/api/health`        | None  | 200     |                         |
+| POST   | `/api/auth/register` | None  | 201     | 400, 409                |
+| POST   | `/api/auth/login`    | None  | 200     | 400, 401                |
+| GET    | `/api/resources`     | None  | 200     |                         |
+| GET    | `/api/resources/:id` | None  | 200     | 400, 404                |
+| POST   | `/api/resources`     | Admin | 201     | 400, 401, 403           |
+| PUT    | `/api/resources/:id` | Admin | 200     | 400, 401, 403, 404      |
+| DELETE | `/api/resources/:id` | Admin | 200     | 400, 401, 403, 404, 409 |
+| POST   | `/api/bookings`      | User  | 201     | 400, 401, 404, 409      |
+| GET    | `/api/bookings`      | Admin | 200     | 400, 401, 403           |
+| GET    | `/api/bookings/my`   | User  | 200     | 401                     |
+| GET    | `/api/bookings/:id`  | Owner | 200     | 400, 401, 403, 404      |
+| DELETE | `/api/bookings/:id`  | Owner | 200     | 400, 401, 403, 404      |
+
+`DELETE /api/bookings/:id` cancels the booking by changing its status to `CANCELLED` rather than deleting the database row.
+
+### Admin Booking Filters
+
+`GET /api/bookings` supports:
+
+* `resource_id`
+* `user_id`
+* `status` — `CONFIRMED` or `CANCELLED`
+* `date` — `YYYY-MM-DD`, interpreted as an IST calendar day
+
+Bookings that overlap the requested IST day are included.
+
+Results are returned newest first and are capped at 100 records.
+
+## Example: Create a Booking
 
 ```http
 POST /api/bookings
+
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -115,84 +238,208 @@ Content-Type: application/json
 }
 ```
 
-`201 Created` returns `{ "success": true, "booking": { ... } }`.
+Successful response:
 
-If the slot is taken, the response is `409 Conflict`:
+```text
+201 Created
+```
+
+Example response:
 
 ```json
 {
-  "success": false,
-  "message": "This resource is already booked for the requested time",
-  "alternatives": {
-    "other_resources": [ { "id": 2, "name": "Room B", "...": "..." } ],
-    "other_times": [
-      { "start_time": "2026-10-15T05:30:00.000Z", "end_time": "2026-10-15T06:30:00.000Z" }
-    ]
-  }
+  "success": true,
+  "booking": {}
 }
 ```
 
+If the requested slot is already booked:
+
+```text
+409 Conflict
+```
+
+The response includes alternative resources and available time slots.
+
 ## Booking Rules
 
-| Rule | Value |
-|---|---|
-| Duration | 30 minutes to 4 hours |
-| Minimum notice | 15 minutes before start |
-| Maximum advance | 90 days |
-| Overlaps on one resource | Not allowed between `CONFIRMED` bookings |
-| Overlaps across different resources | Allowed, so one user can hold several bookings at once |
-| Back-to-back bookings | Allowed: ranges are half-open `[start, end)`, so 2–3 pm and 3–4 pm do not conflict |
-| Timezone | Single timezone, IST (Asia/Kolkata). Timestamps must include an offset, such as `+05:30` or `Z` |
-| Not supported | Recurring bookings, waitlists, approval workflows |
+| Rule                  | Value                                    |
+| --------------------- | ---------------------------------------- |
+| Duration              | 30 minutes to 4 hours                    |
+| Minimum notice        | 15 minutes                               |
+| Maximum advance       | 90 days                                  |
+| Same-resource overlap | Not allowed between `CONFIRMED` bookings |
+| Different resources   | Bookings can overlap                     |
+| Back-to-back bookings | Allowed                                  |
+| Timezone              | IST (`Asia/Kolkata`)                     |
+
+Bookings use **half-open intervals `[start, end)`**.
+
+Therefore, a booking from 2:00 PM–3:00 PM and another from 3:00 PM–4:00 PM do not conflict.
+
+### Not Supported
+
+* Recurring bookings
+* Waitlists
+* Approval workflows
 
 ## Database
 
-Three tables: `users`, `resources`, `bookings` (see `db/schema.sql`).
+The database contains three main tables:
 
-- `bookings.status` is `CONFIRMED` or `CANCELLED`
-- `CHECK` constraints enforce `end_time > start_time` and the 30 minute to 4 hour duration
-- A partial index on `(resource_id, start_time, end_time) WHERE status = 'CONFIRMED'` speeds up the conflict check
-- A GiST `EXCLUDE` constraint makes overlapping confirmed bookings impossible at the database level:
+* `users`
+* `resources`
+* `bookings`
+
+Important database-level rules include:
+
+* `bookings.status` can only be `CONFIRMED` or `CANCELLED`
+* `CHECK` constraints validate booking times and duration
+* A partial index on `(resource_id, start_time, end_time)` improves conflict-check performance
+* A PostgreSQL GiST `EXCLUDE` constraint prevents overlapping confirmed bookings at the database level
+
 ```sql
-  EXCLUDE USING gist (resource_id WITH =, tstzrange(start_time, end_time) WITH &&)
-  WHERE (status = 'CONFIRMED')
+EXCLUDE USING gist (
+  resource_id WITH =,
+  tstzrange(start_time, end_time) WITH &&
+)
+WHERE (status = 'CONFIRMED')
 ```
 
 ## Concurrency Design
 
-Two layers protect against double-booking:
+The booking system uses **two layers of protection** against double booking.
 
-1. **Application layer.** Each booking runs in a transaction that first takes `pg_advisory_xact_lock(resource_id)`. Bookings for the same resource are serialized, while bookings for different resources still run in parallel. Inside the lock the code checks for overlaps and then inserts. The lock is released automatically on commit or rollback.
-2. **Database layer.** The `EXCLUDE` constraint is the final guarantee. If an overlap ever got past the application check, Postgres rejects the insert (error `23P01`), and the API handles it like a normal conflict.
+### 1. Application-Level Protection
 
-On a conflict the database connection is released **before** the alternatives are looked up, so conflict responses cannot starve the connection pool (`npm run test:pool` checks this).
+Each booking is executed inside a database transaction.
 
-**Result:** 10 simultaneous requests for the same slot gave exactly 1 success and 9 conflicts. The full output is in [`docs/concurrency-test-output.txt`](docs/concurrency-test-output.txt).
+Before checking availability, the application acquires a transaction-scoped PostgreSQL advisory lock for the resource:
+
+```sql
+SELECT pg_advisory_xact_lock(resource_id);
+```
+
+This serializes booking attempts for the **same resource**, while allowing bookings for different resources to proceed independently.
+
+Inside the lock, the application:
+
+1. Checks for an overlapping confirmed booking.
+2. Inserts the booking if the slot is available.
+3. Commits the transaction.
+
+The advisory lock is automatically released when the transaction commits or rolls back.
+
+### 2. Database-Level Protection
+
+The PostgreSQL `EXCLUDE` constraint provides a final database-level guarantee.
+
+If an overlapping booking reaches the insert operation, PostgreSQL rejects it with error code `23P01`.
+
+The API handles this as a booking conflict and returns:
+
+```text
+409 Conflict
+```
+
+### Concurrency Test
+
+The concurrency test sends **10 simultaneous booking requests for the same resource and time slot**.
+
+Result:
+
+```text
+1 successful booking
+9 conflicts
+```
+
+The full test output is available at:
+
+```text
+docs/concurrency-test-output.txt
+```
+
+The database connection is released before searching for alternative resources and time slots. This prevents conflict responses from unnecessarily occupying connection-pool slots.
 
 ## Testing
 
-| Command | What it does | Needs |
-|---|---|---|
-| `npm test` | Jest + Supertest: booking conflicts, validation, get-by-id, cancellation, and IST date helpers | `.env` with a working `DATABASE_URL` and the schema applied |
-| `npm run test:concurrency` | Fires 10 simultaneous requests at one slot; expects 1 × 201 and 9 × 409 | Running server, `TEST_TOKEN` env var (a user JWT), and resource id 2 to exist |
-| `npm run test:pool` | Fires 12 requests at a booked slot to confirm none time out | Running server and `TEST_TOKEN` |
+| Command                    | Description                                                                                        | Requirements                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `npm test`                 | Jest + Supertest tests for booking conflicts, validation, get-by-id, cancellation, and IST helpers | `.env` with a working database and schema applied |
+| `npm run test:concurrency` | Sends 10 simultaneous requests for the same slot; expects 1 × 201 and 9 × 409                      | Running server, `TEST_TOKEN`, resource ID 2       |
+| `npm run test:pool`        | Sends multiple requests to a booked slot to verify connection-pool behavior                        | Running server, `TEST_TOKEN`                      |
 
-> **Note:** `npm test` runs against the real database in `DATABASE_URL`. It registers throwaway test users, and it deletes **all** bookings that start on one IST day roughly 75 days ahead. Use a development database, not one holding data you care about.
+> **Note:** `npm test` runs against the database configured in `DATABASE_URL`. It creates temporary test users and removes bookings from a test day roughly 75 days in the future. Use a development database rather than a database containing important data.
 
-**Postman:** import `postman/resource-booking-api.postman_collection.json` and `postman/local.postman_environment.json`. Promote an admin user (see above) and put their password in the environment's `adminPassword`. Then run the collection in order. It covers auth, resources, bookings (conflicts, validation, ownership, cancellation) and the admin list, and it cleans up after itself.
+## Postman
 
-Automated Jest tests cover bookings and the IST helpers. Auth, resource and admin-list behaviour is covered by the Postman collection.
+The project includes a Postman collection:
+
+```text
+postman/resource-booking-api.postman_collection.json
+```
+
+and a local environment:
+
+```text
+postman/local.postman_environment.json
+```
+
+### Using the Collection
+
+1. Import both files into Postman.
+2. Create or promote an admin user.
+3. Add the admin password to the environment.
+4. Run the collection in order.
+
+The collection covers:
+
+* Authentication
+* Resource management
+* Booking creation
+* Booking conflicts
+* Booking validation
+* Ownership checks
+* Cancellation
+* Admin booking list
+* Admin filters
 
 ## Known Limitations
 
-- Alternative time suggestions only scan forward from the requested start, within the same IST day
-- Single timezone (IST); no per-user timezones
-- `GET /api/bookings/my` is not paginated; the admin list is capped at 100 rows
-- No rate limiting, and CORS is open to all origins
-- JWTs last 7 days and there is no refresh or logout mechanism
-- No frontend and no hosted deployment; the API runs locally against a hosted database
+* Alternative time suggestions only scan forward from the requested start within the same IST day
+* Only IST (`Asia/Kolkata`) is supported
+* `GET /api/bookings/my` is not paginated
+* Admin booking list is capped at 100 rows
+* No rate limiting
+* CORS is open to all origins
+* JWTs expire after 7 days
+* No refresh-token or logout mechanism
+* No frontend; this project focuses on the backend API
 
 ## Possible Next Steps
 
-- Pagination for booking lists
-- Rate limiting on auth routes
+If the project were extended further, possible improvements would include:
+
+* Pagination for booking lists
+* Rate limiting on authentication routes
+* Refresh tokens
+* More comprehensive automated test coverage
+* Support for multiple timezones
+* Frontend application
+
+## Project Focus
+
+This project was built as a **backend-focused SDE project** to explore:
+
+* REST API design
+* Authentication and authorization
+* PostgreSQL
+* Database constraints
+* Transactions
+* Concurrency control
+* Connection-pool management
+* Automated API testing
+
+---
+
+Built with Node.js, Express, PostgreSQL, and a focus on reliable concurrent booking.
