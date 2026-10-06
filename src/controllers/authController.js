@@ -6,14 +6,14 @@ const generateToken = require('../utils/generateToken');
 
 // POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
-  const { name, password } = req.body;
-  // Normalize once, use everywhere below — "User@Test.com" and
-  // "user@test.com" must be treated as the same account.
-  const email = req.body.email?.trim().toLowerCase();
+  const { name, password } = req.body ?? {};
+  const rawEmail = req.body?.email;
 
-  if (!name || !email || !password) {
+  if (typeof name !== 'string' || typeof rawEmail !== 'string' || typeof password !== 'string'
+      || !name.trim() || !rawEmail.trim() || !password) {
     throw new AppError('Name, email, and password are required', 400);
   }
+  const email = rawEmail.trim().toLowerCase();
 
   if (password.length < 8) {
     throw new AppError('Password must be at least 8 characters', 400);
@@ -59,12 +59,13 @@ const register = asyncHandler(async (req, res) => {
 
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
-  const { password } = req.body;
-  const email = req.body.email?.trim().toLowerCase();
+  const { password } = req.body ?? {};
+  const rawEmail = req.body?.email;
 
-  if (!email || !password) {
+  if (typeof rawEmail !== 'string' || typeof password !== 'string' || !rawEmail.trim() || !password) {
     throw new AppError('Email and password are required', 400);
   }
+  const email = rawEmail.trim().toLowerCase();
 
   const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
   const user = result.rows[0];

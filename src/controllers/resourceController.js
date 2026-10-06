@@ -2,6 +2,7 @@ const pool = require('../db/pool');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
+
 // Shared guard for every :id route below — req.params.id is always a raw
 // string from the URL. Without this, a non-numeric id (e.g. "abc") reaches
 // Postgres unvalidated and throws a raw 22P02, which isn't marked
@@ -148,4 +149,6 @@ const deleteResource = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Resource deleted' });
 });
 
-module.exports = { getResources, getResourceById, createResource, updateResource, deleteResource };
+
+
+module.exports = { getResources, getResourceById, createResource, updateResource, deleteResource};

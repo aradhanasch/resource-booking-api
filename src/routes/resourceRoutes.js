@@ -7,7 +7,7 @@ const {
   getResourceById,
   createResource,
   updateResource,
-  deleteResource,
+  deleteResource
 } = require('../controllers/resourceController');
 
 // Public routes
