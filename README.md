@@ -48,8 +48,8 @@ This is a **backend-only SDE project**. The API is deployed on Railway and can a
 │   ├── resource-booking-api.postman_collection.json
 │   └── local.postman_environment.json
 ├── scripts/
-│   ├── concurrencyTest.js         # Manual concurrency test
-│   └── poolTest.js                # Connection-pool test
+│   ├── concurrencyTest.js         # Manual concurrency test (10 simultaneous requests)
+│   └── poolPressureTest.js        # Connection-pool pressure test
 ├── src/
 │   ├── app.js                     # Express app, routes and middleware
 │   ├── server.js                  # Server entry point and environment checks
@@ -62,6 +62,9 @@ This is a **backend-only SDE project**. The API is deployed on Railway and can a
 │   │   ├── requireAdmin.js
 │   │   └── errorHandler.js
 │   ├── routes/
+│   │   ├── authRoutes.js
+│   │   ├── resourceRoutes.js
+│   │   └── bookingRoutes.js
 │   ├── services/
 │   │   └── alternativeService.js  # Alternative resource/time suggestions
 │   ├── db/
@@ -69,10 +72,13 @@ This is a **backend-only SDE project**. The API is deployed on Railway and can a
 │   └── utils/
 │       ├── AppError.js
 │       ├── asyncHandler.js
-│       ├── jwt.js
-│       └── ist.js
-└── tests/
-    └── ...                         # Jest + Supertest tests
+│       ├── generateToken.js       # Signs JWTs
+│       └── istTime.js             # IST day-boundary helpers
+├── tests/
+│   ├── booking.test.js            # Jest + Supertest API tests
+│   └── istTime.test.js            # Unit tests for IST helpers
+├── .env.example
+└── package.json
 ```
 
 ## Getting Started
@@ -411,7 +417,6 @@ The collection covers:
 * `GET /api/bookings/my` is not paginated
 * Admin booking list is capped at 100 rows
 * No rate limiting
-* CORS is open to all origins
 * JWTs expire after 7 days
 * No refresh-token or logout mechanism
 * No frontend; this project focuses on the backend API
